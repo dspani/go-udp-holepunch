@@ -11,6 +11,10 @@ type clientType map[string]bool
 
 var clients = clientType{}
 
+type conns map[string]*net.TCPConn
+
+var openConnections = conns{}
+
 func (c clientType) keys(filter string) string {
 	output := []string{}
 	for key := range c {
@@ -18,42 +22,46 @@ func (c clientType) keys(filter string) string {
 			output = append(output, key)
 		}
 	}
-
 	return strings.Join(output, ",")
 }
 
 // Server --
 func Server() {
+	fmt.Println("Running Server")
 	localAddress := ":9595"
 	if len(os.Args) > 2 {
 		localAddress = os.Args[2]
 	}
 
-	addr, _ := net.ResolveUDPAddr("udp", localAddress)
-	conn, _ := net.ListenUDP("udp", addr)
-
+	addr, _ := net.ResolveTCPAddr("tcp", localAddress)
+	listener, _ := net.ListenTCP("tcp", addr)
 	for {
+		fmt.Println("Waiting for connection")
+		conn, _ := listener.AcceptTCP()
+		fmt.Println("accepted: ", conn.RemoteAddr())
 		buffer := make([]byte, 1024)
-		bytesRead, remoteAddr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			panic(err)
-		}
+		n, err := conn.Read(buffer)
+		fmt.Println(err)
+		fmt.Println(string(buffer[:n]))
 
-		incoming := string(buffer[0:bytesRead])
+		openConnections[conn.RemoteAddr().String()] = conn
+		incoming := string(buffer[0:n])
 		fmt.Println("[INCOMING]", incoming)
 		if incoming != "register" {
 			continue
 		}
+		clients[conn.RemoteAddr().String()] = true
 
-		clients[remoteAddr.String()] = true
+		for connection := range openConnections {
+			if connection != conn.RemoteAddr().String() {
+				conn.Write([]byte(connection))
+				openConnections[connection].Write([]byte(conn.RemoteAddr().String()))
+				fmt.Println(conn.RemoteAddr())
+				fmt.Printf("[INFO] Responded to %s with %s\n", conn.RemoteAddr(), connection)
+				fmt.Printf("[INFO] Responded to %s with %s\n", connection, conn.RemoteAddr())
 
-		for client := range clients {
-			resp := clients.keys(client)
-			if len(resp) > 0 {
-				r, _ := net.ResolveUDPAddr("udp", client)
-				conn.WriteTo([]byte(resp), r)
-				fmt.Printf("[INFO] Responded to %s with %s\n", client, string(resp))
 			}
 		}
+
 	}
 }
